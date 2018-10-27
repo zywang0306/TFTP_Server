@@ -182,9 +182,6 @@ char *base_directory;
 				}
 				printf("transfer completed\n");
 				fclose(fd);
-				close(s);
-	
-				exit(0);
 			}
 		}
 	}

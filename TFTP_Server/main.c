@@ -11,6 +11,7 @@
 #include <netdb.h>
 #define RECV_TIMEOUT 10
 #define RECV_RETRIES 10
+
  enum opcode {
 	RRQ = 1,
 	WRQ,

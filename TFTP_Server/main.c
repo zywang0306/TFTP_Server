@@ -12,6 +12,8 @@
 #define RECV_TIMEOUT 10
 #define RECV_RETRIES 10
 
+char next_char = 0;
+
  enum opcode {
 	RRQ = 1,
 	WRQ,
@@ -21,7 +23,7 @@
 };
 enum mode {
 	NETASCII = 1,
-	OCTET
+	OCTET = 2,
 };
 typedef union {
  	uint16_t opcode;
@@ -44,7 +46,7 @@ typedef union {
 		uint8_t error_string[512];
 	} error;
  } tftp_message;
-char *base_directory;
+
 
  ssize_t tftp_send_data(int s, uint16_t block_number, uint8_t *data,
 	ssize_t dlen, struct sockaddr_in *sock, socklen_t slen)
@@ -57,6 +59,31 @@ char *base_directory;
 	c = sendto(s, &m, 4 + dlen, 0,	(struct sockaddr *) sock, slen);
  	return c;
 }
+
+ ssize_t tftp_send_error(int s, uint16_t error_code, struct sockaddr_in *sock, socklen_t slen)
+{
+	tftp_message m;
+	ssize_t c;
+	int dlen;
+ 	m.opcode = htons(ERROR);
+	char errormsg1[] = "File not found";
+	m.error.error_code = 1;
+	/*
+	switch(error_code){
+		case 1: printf("%s\n", errormsg1);
+				dlen = strlen(errormsg1);
+				memcpy(m.error.error_string, errormsg1, dlen);
+		default:
+			return 0;
+	}
+	*/
+	printf("%s\n", errormsg1);
+	dlen = strlen(errormsg1);
+	memcpy(m.error.error_string, errormsg1, dlen);
+	c = sendto(s, &m, 4 + dlen, 0,	(struct sockaddr *) sock, slen);
+ 	return c;
+}
+
  ssize_t tftp_send_ack(int s, uint16_t block_number,
 	struct sockaddr_in *sock, socklen_t slen)
 {
@@ -83,19 +110,20 @@ char *base_directory;
 	struct servent *ss;
 	struct sockaddr_in server_sock;
  	if (argc < 2) {
-		printf("usage: [base directory] [port]\n");
+		printf("usage: [ip address] [port]\n");
 		exit(1);
 	}
- 	base_directory = argv[1];
+ 	char* server_address = argv[1]; 
 	sscanf(argv[2], "%hu", &port);
 	port = htons(port);
 	ss = getservbyname("tftp", "udp");
 	pp = getprotobyname("udp");
 	s = socket(AF_INET, SOCK_DGRAM, pp->p_proto);
 	server_sock.sin_family = AF_INET;
-	server_sock.sin_addr.s_addr = htonl(INADDR_ANY);
+	server_sock.sin_addr.s_addr = inet_addr(server_address);
 	server_sock.sin_port = port ? port : ss->s_port;
- 	bind(s, (struct sockaddr *) &server_sock, sizeof(server_sock));
+ 	if(bind(s, (struct sockaddr *) &server_sock, sizeof(server_sock))<0)
+		perror("socket binding failed, please try with sudo\n");
  	printf("tftp server is listening\n");
  	while (1) {
 		struct sockaddr_in client_sock;
@@ -124,36 +152,101 @@ char *base_directory;
 				mode_s = strchr(filename, '\0') + 1;
 				opcode = ntohs(message.opcode);
 				fd = fopen(filename, opcode == RRQ ? "r" : "w");
+				if(fd == NULL){
+				    tftp_send_error(s, 1, &client_sock, slen);
+					exit(1);
+				}
 				mode = strcasecmp(mode_s, "netascii") ? NETASCII :strcasecmp(mode_s, "octet") ? OCTET :0;
 				printf("request received\n");
+				printf("The mode is %d\n", mode);
 
-				if (opcode == RRQ) {
+				if (opcode == RRQ &&(mode == 1 || mode == 2)) {
 					tftp_message m;
 					uint8_t data[512];
 					int dlen, c;
 					uint16_t block_number = 0;
 					int countdown;
 					int to_close = 0;
-					while (!to_close) {
-						dlen = fread(data, 1, sizeof(data), fd);
-						block_number++;
-						if (dlen < 512) { 
-							to_close = 1;
-						}
-						for (countdown = RECV_RETRIES; countdown; countdown--) {
-							c = tftp_send_data(s, block_number, data, dlen, &client_sock, slen);
-							c = tftp_recv_message(s, &m, &client_sock, &slen);
-							if (c >= 4) {
-								break;
+					if(mode == 1){
+						while (!to_close) {
+							dlen = fread(data, 1, sizeof(data), fd);
+							block_number++;
+							if (dlen < 512) { 
+								to_close = 1;
+							}
+							for (countdown = RECV_RETRIES; countdown; countdown--) {
+								c = tftp_send_data(s, block_number, data, dlen, &client_sock, slen);
+								c = tftp_recv_message(s, &m, &client_sock, &slen);
+								if(countdown != 10){
+									printf("The remaining retries nunber is %d.\n", countdown);
+								}
+								if (c >= 4) {
+									break;
+								}
+							}
+							if (!countdown) {
+								printf("transfer timed out\n");
+								exit(1);
 							}
 						}
-						if (!countdown) {
-							printf("transfer timed out\n");
-							exit(1);
+					}else{
+						while(!to_close){
+							block_number++;
+							int count_r;
+							char* ptr;
+							char charc;
+							ptr = &(data[0]);
+							for(count_r = 0; count_r < 512; count_r++){
+								if(next_char >= 0){
+									*ptr++ = next_char;
+									next_char = -1;
+									continue;
+								}
+
+								charc = getc(fd);
+
+								if(charc == EOF){
+									if(ferror(fd)){
+									//	err_dump("read err from getc on local file");
+									}
+									to_close = 1;
+									break;
+								}else if(charc == '\n'){
+									charc = '\r';
+									next_char = '\n';
+								}else if(charc == '\r'){
+									next_char = '\0';
+								}else{
+									next_char = -1;
+								}
+								*ptr++ = charc;
+							}
+
+							for(countdown = RECV_RETRIES; countdown; countdown--){
+								c = tftp_send_data(s, block_number, data, count_r, &client_sock, slen);
+								c = tftp_recv_message(s, &m, &client_sock, &slen);
+								if(countdown != 10){
+									printf("The remaining retries nunber is %d.\n", countdown);
+								}
+								if (c >= 4) {
+									break;
+								}
+							}
+							if (!countdown) {
+								/*
+								char* err_word = "The requested filename is not exit.\n";
+								printf("%s", err_word);
+								int dlen = strlen(err_word);
+								memcpy(data, error_word, dlen);
+				    			tftp_send_error(s, 0, data, dlen, &client_sock, slen);
+								exit(1);
+								*/
+								printf("transfer timed out\n");
+								exit(1);
+							}
 						}
 					}
-				}
-				else if (opcode == WRQ) {
+				} if (opcode == WRQ) {
 					tftp_message m;
 					ssize_t c;
 					uint16_t block_number = 0;

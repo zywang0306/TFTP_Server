@@ -1,0 +1,20 @@
+Network Programming Assignment 2
+
+
+README are written by Zeyu Wang. Test case are written by Yu Lei.
+
+How to run:
+Enter "make -f Makefile" to compile the code.
+Use the command "./main <server.ip> <port.no> " to open the server.
+Open another Terminal and use client.
+
+
+tftp_send_data() - Send data to the client
+tftp_send_error() - Send error to the client
+tftp_send_ack() - Send ACK to client
+tftp_recv_message() - Receive message from client
+
+
+Group distribution:
+Zeyu Wang writes the code for RRQ in Octet Mode and WRQ. Zeyu Wang worked out for the test case (1)(2)(4)(6)(8).
+Yulei writes the code for RRQ in Netascii mode and error processing. Yulei worked out the test case (3)(5)(7).
